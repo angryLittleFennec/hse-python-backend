@@ -1,30 +1,66 @@
+import asyncio
 from typing import Any, Awaitable, Callable
 
 import math
 import json
 from urllib.parse import parse_qsl
 
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST, push_to_gateway
+
 import uvicorn
 
+
+REQUEST_COUNT = Counter("app_request_count", "Total number of requests")
+METRICS_COUNT = Counter("metrics_request_count", "Num of metrics requests")
+FACTORIAL_COUNT = Counter("factorial_request_count", "Num of factorial requests")
+FIBONACCI_COUNT = Counter("fibonacci_request_count", "Num of fibonacci requests")
+MEAN_COUNT = Counter("min_request_count", "Num of min requests")
+
+
+PUSHGATEWAY_URL = "http://localhost:9091"
 BAD_REQUEST = "Bad request"
 NOT_FOUND = "Not found"
 UNPROCESSABLE_ENTITY = 'Unprocessable entity'
 
+def push_metrics():
+    push_to_gateway(PUSHGATEWAY_URL, job='my_asgi_app', registry=None) 
+
+
 async def app(scope, receive, send):
+    REQUEST_COUNT.inc()
+    
     if scope['type'] == 'http' and scope['method'] == 'GET':
         path = scope['path']
         if path == '/factorial':
             await factorial(scope, send)
+            FACTORIAL_COUNT.inc()
             return
         elif path.startswith('/fibonacci'):
+            FIBONACCI_COUNT.inc()
             await fibonacci(scope, send)
             return
         elif path.startswith('/mean'):
+            MEAN_COUNT.inc()
             await mean(receive, send)
             return
-
+        elif path == '/metrics':
+            METRICS_COUNT.inc()
+            await metrics(send)
+            return
+ 
     await send_error(send=send, status_code=404, error_message=NOT_FOUND)
 
+
+async def metrics(send):
+    await send({
+        'type': 'http.response.start',
+        'status': 200,
+        'headers': [(b'content-type', CONTENT_TYPE_LATEST.encode())],
+    })
+    await send({
+        'type': 'http.response.body',
+        'body': generate_latest(),
+    })
 
 
 async def factorial(scope, send):
@@ -102,6 +138,3 @@ async def send_json_answer(send, answer):
         'type': 'http.response.body',
         'body': json.dumps(answer).encode(),
     })
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", port=8000, log_level="info")
